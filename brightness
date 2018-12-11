@@ -147,8 +147,7 @@ expires="1500"
 
 while getopts "d:i:nh" o; do
     case "$o" in
-        d)
-decrease_brightness $OPTARG ;;
+        d) decrease_brightness $OPTARG ;;
         i) increase_brightness $OPTARG ;;
         e) expires=$OPTARG ;;
         n) opt_notification=true ;;
