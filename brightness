@@ -108,7 +108,7 @@ get_progress_bar() {
 notify_brightness() {
     local max=$(get_max_brightness)
     local brightness=$(get_brightness)
-    local percent=$(echo "$brightness / $max * 100" | bc -l)
+    local percent=$(echo "scale=1; $brightness / $max * 100" | bc -l)
     local text="Brightness: ${percent} percent"
 
     if $opt_show_volume_progress; then
