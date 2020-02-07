@@ -16,7 +16,7 @@
 #  Copyright (c) 2018 Beau Hastings. All rights reserved.
 #  License: GNU General Public License v2
 #
-#  Author: Beau Hastings <beausy@gmail.com>
+#  Author: Beau Hastings <beau@saweet.net>
 #  URL: https://github.com/hastinbe/i3-kb-brightness
 
 get_brightness() {
