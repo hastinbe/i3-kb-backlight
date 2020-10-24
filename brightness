@@ -4,14 +4,10 @@
 #
 #  Keyboard backlight control and notifications for i3wm
 #
-#  Requires:
+#  Dependencies:
 #    awk (POSIX compatible)
 #    bc
 #    upower
-#
-#  Optional:
-#    A libnotify compatible notification daemon such as notify-osd or dunst
-#    notify-send (libnotify) or dunstify (dunst)
 #
 #  Copyright (c) 2018 Beau Hastings. All rights reserved.
 #  License: GNU General Public License v2
@@ -32,24 +28,24 @@ set_brightness() {
 }
 
 increase_brightness() {
-    local step="$1"
-    local current=$(get_brightness)
-    local max=$(get_max_brightness)
-    local new=$(min $max $(( $current + $step )) )
+    local -r step=$1
+    local -r current=$(get_brightness)
+    local -r max=$(get_max_brightness)
+    local -r new=$(min $max $(( $current + $step )) )
 
     set_brightness $new
 }
 
 decrease_brightness() {
-    local step="$1"
-    local current=$(get_brightness)
-    local new=$(max 0 $(( $current - $step )) )
+    local -r step=$1
+    local -r current=$(get_brightness)
+    local -r new=$(max 0 $(( $current - $step )) )
 
     set_brightness $new
 }
 
 backlight() {
-    local method="$1"
+    local -r method=$1
 
     case "$method" in
         GetBrightness)
@@ -87,6 +83,10 @@ clamp() {
     echo $(min $(max $1 $2) $3)
 }
 
+error() {
+    echo "$RED$*$NORMAL"
+}
+
 # Generates a progress bar for the provided value.
 #
 # Arguments:
@@ -96,67 +96,264 @@ clamp() {
 #
 # Returns:
 #   The progress bar.
-get_progress_bar() {
-    local percent="$1"
-    local max_percent=${2:-100}
-    local divisor=${3:-5}
-    local progress=$((($percent > $max_percent ? $max_percent : $percent) / $divisor))
+progress_bar() {
+    local -r percent=${1:?$(error 'Percentage is required')}
+    local -r max_percent=${2:-100}
+    local -r divisor=${3:-5}
+    local -r progress=$((($percent > $max_percent ? $max_percent : $percent) / $divisor))
 
-    printf '█%.0s' $(eval echo "{1..$progress}")
+    printf -v bar "%*s" $progress
+    echo "${bar// /█}"
 }
 
 notify_brightness() {
-    local max=$(get_max_brightness)
-    local brightness=$(get_brightness)
-    local percent=$(echo "scale=1; $brightness / $max * 100" | bc -l)
-    local text="Brightness: ${percent} percent"
+    local -r max=$(get_max_brightness)
+    local -r brightness=$(get_brightness)
+    local -r percent=$(echo "\
+    define pcnt(x,y) { \
+        auto s, var; \
+        s = scale; \
+        scale = 1; \
+        var = x / y * 100; \
+        scale = s; \
+        return (var); \
+    } scale = 0; pcnt($brightness,$max)/1" | bc -l)
+    local text="Brightness: ${percent}%"
 
-    if $opt_show_volume_progress; then
-        local progress=$(get_progress_bar "$percent")
+    if $SHOW_BRIGHTNESS_PROGRESS; then
+        local -r progress=$(progress_bar $percent)
         text="$text $progress"
     fi
 
-    if $opt_use_dunstify; then
-        dunstify -i "keyboard-brightness" -t $expires -h int:value:"$percent" -h string:synchronous:brightness "$text" -r 1000
+    case "$NOTIFICATION_METHOD" in
+        xosd    ) notify_brightness_xosd "$percent" "$text" ;;
+        herbe   ) notify_brightness_herbe "$text" ;;
+        *       ) notify_brightness_libnotify "$percent" "$ICON" "$text" ;;
+    esac
+}
+
+list_notification_methods() {
+    awk -W posix 'match($0,/^notify_brightness_([[:alnum:]]+)/) {print substr($0, 19, RLENGTH-18)}' "$BASH_SOURCE" || exit $EX_USAGE
+    exit $EX_OK
+}
+
+# Send notifcation for libnotify-compatible notification daemons.
+#
+# Arguments:
+#   Percent     (integer) An integer indicating the brightness.
+#   Icon        (string) Icon to display.
+#   Text        (string) Notification text.
+notify_brightness_libnotify() {
+    local -r percent=$1
+    local -r icon=${2:-$ICON}
+    local -r text=${@:3}
+
+    if $USE_DUNSTIFY; then
+        ${DUNSTIFY_PATH}dunstify -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text" -r 1000
     else
-        notify-send -i "keyboard-brightness" -t $expires -h int:value:"$percent" -h string:synchronous:brightness "$text"
+        ${NOTIFY_SEND_PATH}notify-send -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text"
+    fi
+}
+
+# Send notification to XOSD.
+#
+# Arguments:
+#   Percent     (integer) An integer indicating the brightness.
+#   Text        (string) Notification text.
+notify_brightness_xosd() {
+    local -r percent=$1
+    local -r text=${@:2}
+    local -r delay=$(ms_to_secs "$EXPIRES")
+
+    ${XOSD_PATH}osd_cat --align center -b percentage -P "$percent" -d "$delay" -p top -A center -c "$COLOR_XOSD_TEXT" -T "$text" -O 2 -u "$COLOR_XOSD_OUTLINE" & disown
+}
+
+# Send notification to herbe.
+#
+# Arguments:
+#   Text    (string) Notification text.
+#
+# Note: a patch with a notify-send script for herbe, not in the current version at this
+#       time but would make this irrelevant. See https://github.com/dudik/herbe/pull/10
+notify_brightness_herbe() {
+    local -r text=$@
+
+    # Dismiss existing/pending notifications to prevent queuing
+    pkill -SIGUSR1 herbe
+
+    ${HERBE_PATH}herbe "$text" & disown
+}
+
+# Rearrange all options to place flags first
+# Author: greycat
+# URL: https://mywiki.wooledge.org/ComplexOptionParsing
+arrange_opts() {
+    local flags args optstr=$1
+    shift
+
+    while (($#)); do
+        case $1 in
+            --)
+                args+=("$@")
+                break;
+                ;;
+            -*)
+                flags+=("$1")
+                if [[ $optstr == *"${1: -1}:"* ]]; then
+                    flags+=("$2")
+                    shift
+                fi
+                ;;
+            *)
+                args+=("$1")
+                ;;
+        esac
+        shift
+    done
+    OPTARR=("${flags[@]}" "${args[@]}")
+}
+
+parse_opts() {
+    local optstring=e:i:nN:phy
+
+    arrange_opts "$optstring" "$@"
+    set -- "${OPTARR[@]}"
+
+    OPTIND=1
+
+    while getopts "$optstring" opt; do
+        case "$opt" in
+            e    ) EXPIRES=$OPTARG ;;
+            i    ) ICON=$OPTARG ;;
+            n    ) DISPLAY_NOTIFICATIONS=true ;;
+            N    ) NOTIFICATION_METHOD=$OPTARG ;;
+            p    ) SHOW_BRIGHTNESS_PROGRESS=true ;;
+            y    ) USE_DUNSTIFY=true ;;
+            h | *) usage ;;
+        esac
+    done
+
+    CMDARGS=${OPTARR[@]:$((OPTIND-1))}
+}
+
+exec_command() {
+    COMMAND=${1:?$(error 'A command is required')}
+    shift
+
+    case "$COMMAND" in
+        increase)
+            increase_brightness "${1:-1}"
+            ;;
+        decrease)
+            decrease_brightness "${1:-1}"
+            ;;
+        notifications)
+            list_notification_methods
+            ;;
+        *)
+            usage
+            ;;
+    esac
+}
+
+# Converts milliseconds to seconds with rounding up
+#
+# Arguments:
+#   milliseconds    (integer) An integer in milliseconds
+ms_to_secs() {
+    echo $(( ($1 + (1000 - 1)) / 1000 ))
+}
+
+init_script() {
+    setup_cli_colors
+}
+
+setup_cli_colors() {
+    if [[ -t 1 ]]; then
+        local -i num_colors=$(tput colors)
+
+        if [[ -n $num_colors ]] && (( $num_colors >= 8 )); then
+            NORMAL="$(tput sgr0)"
+            RED="$(tput setaf 1)"
+            GREEN="$(tput setaf 2)"
+            YELLOW="$(tput setaf 3)"
+            MAGENTA="$(tput setaf 5)"
+        fi
     fi
 }
 
 usage() {
-    echo "Usage: $0 [options]
+    cat <<- EOF 1>&2
+${YELLOW}Usage:${NORMAL} $0 [<options>] <command> [<args>]
 Control keyboard backlight brightness.
 
-Options:
-  -d <amount>       decrease brightness
-  -i <amount>       increase brightness
-  -e <expires>      expiration time of notifications, in milliseconds
-  -n                show notifications
-  -p                show a text progress bar
-  -h                display this help and exit
-" 1>&2
-    exit 1
+${YELLOW}Commands:${NORMAL}
+  ${GREEN}increase <value>${NORMAL}      increase brightness
+  ${GREEN}decrease <value>${NORMAL}      decrease brightness
+  ${GREEN}notifications${NORMAL}         show available notification methods
+  ${GREEN}help${NORMAL}                  display help
+
+${YELLOW}Options:${NORMAL}
+  ${GREEN}-e <expires>${NORMAL}          expiration time of notifications in ms
+  ${GREEN}-i <icon>${NORMAL}             name of keyboard brightness icon
+  ${GREEN}-n${NORMAL}                    enable notifications
+  ${GREEN}-N <method>${NORMAL}           notification method (${MAGENTA}default: libnotify${NORMAL})
+  ${GREEN}-p${NORMAL}                    enable progress bar
+  ${GREEN}-h${NORMAL}                    display help
+EOF
+    exit $EX_USAGE
 }
 
-###########################################################
+show_brightness_notification() {
+    $DISPLAY_NOTIFICATIONS || return
 
-opt_show_volume_progress=false
-opt_notification=false
-opt_use_dunstify=false
-expires="1500"
-
-while getopts "d:i:nh" o; do
-    case "$o" in
-        d) decrease_brightness $OPTARG ;;
-        i) increase_brightness $OPTARG ;;
-        e) expires=$OPTARG ;;
-        n) opt_notification=true ;;
-        p) opt_show_volume_progress=true ;;
-        h | *) usage ;;
-    esac
-done
-shift $((OPTIND-1)) # Shift off options and optional --
-
-if $opt_notification; then
     notify_brightness
-fi
+}
+
+post_command_hook() {
+    show_brightness_notification
+}
+
+main() {
+    # Getopt parsing variables
+    declare OPTIND OPTARR CMDARGS
+
+    # Exit codes
+    declare -ir \
+        EX_OK=0 \
+        EX_USAGE=64
+
+    # CLI colors
+    declare \
+        NORMAL \
+        RED \
+        GREEN \
+        YELLOW \
+        MAGENTA
+
+    # Notification colors
+    declare -r \
+        COLOR_XOSD_TEXT=${COLOR_OTHER:-#FFFFFF} \
+        COLOR_XOSD_OUTLINE=${COLOR_XOSD_OUTLINE:-#222222}
+
+    declare -l NOTIFICATION_METHOD
+
+    declare \
+        COMMAND \
+        ICON=keyboard-brightness
+        DISPLAY_NOTIFICATIONS=false \
+        SHOW_BRIGHTNESS_PROGRESS=false \
+        USE_DUNSTIFY=false
+
+    declare -i EXPIRES=1500
+
+    init_script
+
+    parse_opts $@
+
+    exec_command ${CMDARGS[@]} && post_command_hook
+
+    exit ${EXITCODE:-$EX_OK}
+}
+
+main $@
