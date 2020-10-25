@@ -24,24 +24,24 @@ get_max_brightness() {
 }
 
 set_brightness() {
-    backlight SetBrightness $(clamp $1 0 $(get_max_brightness))
+    backlight SetBrightness "$(clamp "$1" 0 "$(get_max_brightness)")"
 }
 
 increase_brightness() {
     local -r step=$1
     local -r current=$(get_brightness)
     local -r max=$(get_max_brightness)
-    local -r new=$(min $max $(( $current + $step )) )
+    local -r new=$(min "$max" $(( current + step )) )
 
-    set_brightness $new
+    set_brightness "$new"
 }
 
 decrease_brightness() {
     local -r step=$1
     local -r current=$(get_brightness)
-    local -r new=$(max 0 $(( $current - $step )) )
+    local -r new=$(max 0 $(( current - step )) )
 
-    set_brightness $new
+    set_brightness "$new"
 }
 
 backlight() {
@@ -49,16 +49,16 @@ backlight() {
 
     case "$method" in
         GetBrightness)
-            echo $(dbus-send --type=method_call --system --print-reply=literal \
+            dbus-send --type=method_call --system --print-reply=literal \
                 --dest='org.freedesktop.UPower' \
                 '/org/freedesktop/UPower/KbdBacklight' \
-                "org.freedesktop.UPower.KbdBacklight.${method}")
+                "org.freedesktop.UPower.KbdBacklight.${method}"
             ;;
         GetMaxBrightness)
-            echo $(dbus-send --type=method_call --system --print-reply=literal \
+            dbus-send --type=method_call --system --print-reply=literal \
                 --dest='org.freedesktop.UPower' \
                 '/org/freedesktop/UPower/KbdBacklight' \
-                "org.freedesktop.UPower.KbdBacklight.${method}")
+                "org.freedesktop.UPower.KbdBacklight.${method}"
             ;;
         SetBrightness)
             local value="$2"
@@ -80,7 +80,7 @@ max() {
 }
 
 clamp() {
-    echo $(min $(max $1 $2) $3)
+    min "$(max "$1" "$2")" "$3"
 }
 
 error() {
@@ -100,9 +100,9 @@ progress_bar() {
     local -r percent=${1:?$(error 'Percentage is required')}
     local -r max_percent=${2:-100}
     local -r divisor=${3:-5}
-    local -r progress=$((($percent > $max_percent ? $max_percent : $percent) / $divisor))
+    local -r progress=$(((percent > max_percent ? max_percent : percent) / divisor))
 
-    printf -v bar "%*s" $progress
+    printf -v bar "%*s" $progress ""
     echo "${bar// /█}"
 }
 
@@ -121,7 +121,7 @@ notify_brightness() {
     local text="Brightness: ${percent}%"
 
     if $SHOW_BRIGHTNESS_PROGRESS; then
-        local -r progress=$(progress_bar $percent)
+        local -r progress=$(progress_bar "$percent")
         text="$text $progress"
     fi
 
@@ -133,8 +133,8 @@ notify_brightness() {
 }
 
 list_notification_methods() {
-    awk -W posix 'match($0,/^notify_brightness_([[:alnum:]]+)/) {print substr($0, 19, RLENGTH-18)}' "$BASH_SOURCE" || exit $EX_USAGE
-    exit $EX_OK
+    awk -W posix 'match($0,/^notify_brightness_([[:alnum:]]+)/) {print substr($0, 19, RLENGTH-18)}' "${BASH_SOURCE[0]}" || exit "$EX_USAGE"
+    exit "$EX_OK"
 }
 
 # Send notifcation for libnotify-compatible notification daemons.
@@ -146,12 +146,12 @@ list_notification_methods() {
 notify_brightness_libnotify() {
     local -r percent=$1
     local -r icon=${2:-$ICON}
-    local -r text=${@:3}
+    local -r text=${*:3}
 
     if $USE_DUNSTIFY; then
-        ${DUNSTIFY_PATH}dunstify -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text" -r 1000
+        "${DUNSTIFY_PATH}dunstify" -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text" -r 1000
     else
-        ${NOTIFY_SEND_PATH}notify-send -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text"
+        "${NOTIFY_SEND_PATH}notify-send" -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text"
     fi
 }
 
@@ -162,10 +162,10 @@ notify_brightness_libnotify() {
 #   Text        (string) Notification text.
 notify_brightness_xosd() {
     local -r percent=$1
-    local -r text=${@:2}
+    local -r text=${*:2}
     local -r delay=$(ms_to_secs "$EXPIRES")
 
-    ${XOSD_PATH}osd_cat --align center -b percentage -P "$percent" -d "$delay" -p top -A center -c "$COLOR_XOSD_TEXT" -T "$text" -O 2 -u "$COLOR_XOSD_OUTLINE" & disown
+    "${XOSD_PATH}osd_cat" --align center -b percentage -P "$percent" -d "$delay" -p top -A center -c "$COLOR_XOSD_TEXT" -T "$text" -O 2 -u "$COLOR_XOSD_OUTLINE" & disown
 }
 
 # Send notification to herbe.
@@ -176,12 +176,12 @@ notify_brightness_xosd() {
 # Note: a patch with a notify-send script for herbe, not in the current version at this
 #       time but would make this irrelevant. See https://github.com/dudik/herbe/pull/10
 notify_brightness_herbe() {
-    local -r text=$@
+    local -r text=$*
 
     # Dismiss existing/pending notifications to prevent queuing
     pkill -SIGUSR1 herbe
 
-    ${HERBE_PATH}herbe "$text" & disown
+    "${HERBE_PATH}herbe" "$text" & disown
 }
 
 # Rearrange all options to place flags first
@@ -233,10 +233,13 @@ parse_opts() {
         esac
     done
 
-    CMDARGS=${OPTARR[@]:$((OPTIND-1))}
+    read -ra CMDARGS <<< "${OPTARR[@]:$((OPTIND-1))}"
 }
 
 exec_command() {
+    IFS=' ' read -ra ARGS <<< "$1"
+    set -- "${ARGS[@]}"
+
     COMMAND=${1:?$(error 'A command is required')}
     shift
 
@@ -270,9 +273,10 @@ init_script() {
 
 setup_cli_colors() {
     if [[ -t 1 ]]; then
-        local -i num_colors=$(tput colors)
+        local -i num_colors
+        num_colors=$(tput colors)
 
-        if [[ -n $num_colors ]] && (( $num_colors >= 8 )); then
+        if [[ -n $num_colors ]] && (( num_colors >= 8 )); then
             NORMAL="$(tput sgr0)"
             RED="$(tput setaf 1)"
             GREEN="$(tput setaf 2)"
@@ -301,7 +305,7 @@ ${YELLOW}Options:${NORMAL}
   ${GREEN}-p${NORMAL}                    enable progress bar
   ${GREEN}-h${NORMAL}                    display help
 EOF
-    exit $EX_USAGE
+    exit "$EX_USAGE"
 }
 
 show_brightness_notification() {
@@ -316,7 +320,8 @@ post_command_hook() {
 
 main() {
     # Getopt parsing variables
-    declare OPTIND OPTARR CMDARGS
+    declare OPTIND
+    declare -a OPTARR CMDARGS
 
     # Exit codes
     declare -ir \
@@ -349,11 +354,11 @@ main() {
 
     init_script
 
-    parse_opts $@
+    parse_opts "$@"
 
-    exec_command ${CMDARGS[@]} && post_command_hook
+    exec_command "${CMDARGS[*]}" && post_command_hook
 
-    exit ${EXITCODE:-$EX_OK}
+    exit "${EXITCODE:-$EX_OK}"
 }
 
-main $@
+main "$@"
