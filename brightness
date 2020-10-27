@@ -84,7 +84,11 @@ clamp() {
 }
 
 error() {
-    echo "$RED$*$NORMAL"
+    echo "$COLOR_RED$*$COLOR_RESET"
+}
+
+has_color() {
+    (( $(tput colors 2>/dev/null || echo 0) >= 8 )) && [ -t 1 ]
 }
 
 # Generates a progress bar for the provided value.
@@ -267,43 +271,38 @@ ms_to_secs() {
     echo $(( ($1 + (1000 - 1)) / 1000 ))
 }
 
-init_script() {
+bootstrap() {
     setup_cli_colors
 }
 
 setup_cli_colors() {
-    if [[ -t 1 ]]; then
-        local -i num_colors
-        num_colors=$(tput colors)
-
-        if [[ -n $num_colors ]] && (( num_colors >= 8 )); then
-            NORMAL="$(tput sgr0)"
-            RED="$(tput setaf 1)"
-            GREEN="$(tput setaf 2)"
-            YELLOW="$(tput setaf 3)"
-            MAGENTA="$(tput setaf 5)"
-        fi
+    if has_color; then
+        COLOR_RESET=$'\033[0m'
+        COLOR_RED=$'\033[0;31m'
+        COLOR_GREEN=$'\033[0;32m'
+        COLOR_YELLOW=$'\033[0;33m'
+        COLOR_MAGENTA=$'\033[0;35m'
     fi
 }
 
 usage() {
     cat <<- EOF 1>&2
-${YELLOW}Usage:${NORMAL} $0 [<options>] <command> [<args>]
+${COLOR_YELLOW}Usage:${COLOR_RESET} $0 [<options>] <command> [<args>]
 Control keyboard backlight brightness.
 
-${YELLOW}Commands:${NORMAL}
-  ${GREEN}increase <value>${NORMAL}      increase brightness
-  ${GREEN}decrease <value>${NORMAL}      decrease brightness
-  ${GREEN}notifications${NORMAL}         show available notification methods
-  ${GREEN}help${NORMAL}                  display help
+${COLOR_YELLOW}Commands:${COLOR_RESET}
+  ${COLOR_GREEN}increase <value>${COLOR_RESET}      increase brightness
+  ${COLOR_GREEN}decrease <value>${COLOR_RESET}      decrease brightness
+  ${COLOR_GREEN}notifications${COLOR_RESET}         show available notification methods
+  ${COLOR_GREEN}help${COLOR_RESET}                  display help
 
-${YELLOW}Options:${NORMAL}
-  ${GREEN}-e <expires>${NORMAL}          expiration time of notifications in ms
-  ${GREEN}-i <icon>${NORMAL}             name of keyboard brightness icon
-  ${GREEN}-n${NORMAL}                    enable notifications
-  ${GREEN}-N <method>${NORMAL}           notification method (${MAGENTA}default: libnotify${NORMAL})
-  ${GREEN}-p${NORMAL}                    enable progress bar
-  ${GREEN}-h${NORMAL}                    display help
+${COLOR_YELLOW}Options:${COLOR_RESET}
+  ${COLOR_GREEN}-e <expires>${COLOR_RESET}          expiration time of notifications in ms
+  ${COLOR_GREEN}-i <icon>${COLOR_RESET}             name of keyboard brightness icon
+  ${COLOR_GREEN}-n${COLOR_RESET}                    enable notifications
+  ${COLOR_GREEN}-N <method>${COLOR_RESET}           notification method (${COLOR_MAGENTA}default: libnotify${COLOR_RESET})
+  ${COLOR_GREEN}-p${COLOR_RESET}                    enable progress bar
+  ${COLOR_GREEN}-h${COLOR_RESET}                    display help
 EOF
     exit "$EX_USAGE"
 }
@@ -328,13 +327,12 @@ main() {
         EX_OK=0 \
         EX_USAGE=64
 
-    # CLI colors
     declare \
-        NORMAL \
-        RED \
-        GREEN \
-        YELLOW \
-        MAGENTA
+        COLOR_RESET \
+        COLOR_RED \
+        COLOR_GREEN \
+        COLOR_YELLOW \
+        COLOR_MAGENTA
 
     # Notification colors
     declare -r \
@@ -352,7 +350,7 @@ main() {
 
     declare -i EXPIRES=1500
 
-    init_script
+    bootstrap
 
     parse_opts "$@"
 
