@@ -83,12 +83,24 @@ clamp() {
     min "$(max "$1" "$2")" "$3"
 }
 
+empty() {
+    [[ -z $1 ]]
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1;
+}
+
 error() {
     echo "$COLOR_RED$*$COLOR_RESET"
 }
 
 has_color() {
     (( $(tput colors 2>/dev/null || echo 0) >= 8 )) && [ -t 1 ]
+}
+
+has_capability() {
+    [[ "${NOTIFY_CAPS[*]}" =~ $1 ]]
 }
 
 # Generates a progress bar for the provided value.
@@ -151,11 +163,43 @@ notify_brightness_libnotify() {
     local -r percent=$1
     local -r icon=${2:-$ICON}
     local -r text=${*:3}
+    local -a args=(
+        -t "$EXPIRES"
+    )
+    local -a hints=(
+        # Replaces previous notification in some notification servers
+        string:synchronous:brightness
+        # Replaces previous notification in NotifyOSD
+        string:x-canonical-private-synchronous:brightness
+    )
+
+    # If we're not drawing our own progress bar, allow the notification daemon to draw its own (if supported)
+    if ! $SHOW_BRIGHTNESS_PROGRESS; then
+        hints+=(int:value:"$percent")
+    fi
+
+    (( ${#NOTIFY_CAPS[@]} < 1 )) && load_notify_server_caps
+
+    if has_capability icon-static; then
+        args+=(-i "$icon")
+
+        # haskell-notification-daemon (aka deadd-notification-center) does not support -i|--icon
+        hints+=(string:image-path:"$icon")
+    fi
 
     if $USE_DUNSTIFY; then
-        "${DUNSTIFY_PATH}dunstify" -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text" -r 1000
+        args+=(-r 1000)
+
+        # Transient notifications will bypass the idle_threshold setting.
+        # Should be boolean, but Notify-OSD doesn't support boolean yet. Dunst checks
+        # for int and bool with transient so lets play nice with both servers.
+        hints+=(int:transient:1)
+
+        read -ra hints <<< "${hints[@]/#/-h }"
+        "${DUNSTIFY_PATH:+${DUNSTIFY_PATH%/}/}dunstify" "${hints[@]}" "${args[@]}"  "$text"
     else
-        "${NOTIFY_SEND_PATH}notify-send" -i "$icon" -t "$EXPIRES" -h int:value:"$percent" -h string:synchronous:brightness "$text"
+        read -ra hints <<< "${hints[@]/#/-h }"
+        "${NOTIFY_SEND_PATH:+${NOTIFY_SEND_PATH%/}/}notify-send" "${hints[@]}" "${args[@]}" "$text"
     fi
 }
 
@@ -310,7 +354,24 @@ EOF
 show_brightness_notification() {
     $DISPLAY_NOTIFICATIONS || return
 
+    if empty "$NOTIFICATION_METHOD"; then
+        load_notify_server_info
+        NOTIFICATION_METHOD=$NOTIFY_SERVER
+    fi
+
     notify_brightness
+}
+
+# Loads notification system information via DBus
+load_notify_server_info() {
+    command_exists dbus-send || return
+    IFS=$'\t' read -r NOTIFY_SERVER _ _ _ < <(dbus-send --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation | awk 'BEGIN { ORS="\t" }; match($0, /^   string ".*"/) {print substr($0, RSTART+11, RLENGTH-12)}')
+}
+
+# Load notification system capabilities via DBus
+load_notify_server_caps() {
+    command_exists dbus-send || return
+    IFS= read -r -d '' -a NOTIFY_CAPS < <(dbus-send --print-reply=literal --dest="${DBUS_NAME}" "${DBUS_PATH}" "${DBUS_IFAC_FDN}.GetCapabilities" | awk 'RS="      " { if (NR > 2) print $1 }')
 }
 
 post_command_hook() {
@@ -326,6 +387,22 @@ main() {
     declare -ir \
         EX_OK=0 \
         EX_USAGE=64
+
+    # DBUS constants
+    declare -r \
+        DBUS_NAME=org.freedesktop.Notifications \
+        DBUS_PATH=/org/freedesktop/Notifications \
+        DBUS_IFAC_FDN=org.freedesktop.Notifications
+
+    # Notification server information
+    declare \
+        NOTIFY_SERVER
+        # NOTIFY_VENDOR \
+        # NOTIFY_VERSION \
+        # NOTIFY_SPEC_VERSION
+
+    # Notification capabilities
+    declare -a NOTIFY_CAPS=()
 
     declare \
         COLOR_RESET \
