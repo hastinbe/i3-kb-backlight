@@ -117,7 +117,7 @@ Version 2 introduces commands which makes it incompatible with previous versions
 
 Copyright (C) 1989, 1991 Free Software Foundation, Inc.
 
-[build]: https://travis-ci.org/hastinbe/i3-kb-backlight.svg?branch=master
+[build]: https://github.com/hastinbe/i3-kb-backlight/actions/workflows/shellcheck.yml/badge.svg
 [dunst]: https://dunst-project.org
 [herbe]: https://github.com/dudik/herbe
 [i3wm]: https://i3wm.org
